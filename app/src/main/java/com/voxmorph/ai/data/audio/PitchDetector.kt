@@ -17,13 +17,16 @@ class PitchDetector(
      * Human vocal range target: 70 Hz to 400 Hz.
      */
     fun detectPitch(buffer: ShortArray, length: Int): Float {
-        val yinBuffer = FloatArray(length / 2)
+        val halfLen = length / 2
+        if (halfLen <= 2) return 0f
+
+        val yinBuffer = FloatArray(halfLen)
         var runningSum = 0f
 
         // Difference function
-        for (tau in 1 until length / 2) {
+        for (tau in 1 until halfLen) {
             var diff = 0f
-            for (i in 0 until length / 2) {
+            for (i in 0 until halfLen) {
                 val delta = buffer[i].toFloat() - buffer[i + tau].toFloat()
                 diff += delta * delta
             }
@@ -32,7 +35,7 @@ class PitchDetector(
 
         // Cumulative mean normalized difference
         yinBuffer[0] = 1f
-        for (tau in 1 until length / 2) {
+        for (tau in 1 until halfLen) {
             runningSum += yinBuffer[tau]
             yinBuffer[tau] = if (runningSum > 0f) yinBuffer[tau] * tau / runningSum else 1f
         }
@@ -40,14 +43,16 @@ class PitchDetector(
         // Absolute threshold detection
         val threshold = 0.15f
         var detectedTau = -1
-        for (tau in 2 until length / 2) {
+        var tau = 2
+        while (tau < halfLen) {
             if (yinBuffer[tau] < threshold) {
-                while (tau + 1 < length / 2 && yinBuffer[tau + 1] < yinBuffer[tau]) {
-                    // Find local minimum
+                while (tau + 1 < halfLen && yinBuffer[tau + 1] < yinBuffer[tau]) {
+                    tau++
                 }
                 detectedTau = tau
                 break
             }
+            tau++
         }
 
         val rawPitch = if (detectedTau > 0) sampleRate.toFloat() / detectedTau else 0f

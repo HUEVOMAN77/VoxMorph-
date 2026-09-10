@@ -39,7 +39,7 @@ class PitchShifter(
         while (outIdx < length) {
             val copyLen = minOf(frameSize, length - outIdx)
             for (i in 0 until copyLen) {
-                val inPos = (outIdx * pitchRatio).toInt().coerceIn(0, length - 1)
+                val inPos = ((outIdx + i) * pitchRatio).toInt().coerceIn(0, length - 1)
                 val sample = input[inPos].toFloat() * hanningWindow[i % frameSize]
                 output[outIdx + i] = (output[outIdx + i] + sample).coerceIn(-32768f, 32767f).toInt().toShort()
             }
