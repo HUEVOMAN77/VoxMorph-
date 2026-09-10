@@ -1,0 +1,76 @@
+<resources>
+    <string name="app_name">VoxMorph AI</string>
+    <string name="channel_name">VoxMorph Audio Service</string>
+    <string name="channel_description">Keeps human voice processing active in background</string>
+    <string name="notification_title">VoxMorph AI Active</string>
+    <string name="notification_text">Transforming voice in real time...</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_manual">Settings</string>
+    <string name="nav_record">Recordings</string>
+
+    <!-- Home Screen -->
+    <string name="status_active">Transformation Active</string>
+    <string name="status_inactive">Tap to Activate VoxMorph</string>
+    <string name="presets_title">Human Presets</string>
+    <string name="auto_mode_title">Auto Mode</string>
+    <string name="auto_mode_desc">Automatically adapts pitch and formants to your vocal range</string>
+
+    <!-- Presets -->
+    <string name="preset_original">Original</string>
+    <string name="preset_original_desc">No changes, your natural voice</string>
+    <string name="preset_ronca">Raspy Voice</string>
+    <string name="preset_ronca_desc">Deep with subtle announcer grit</string>
+    <string name="preset_profunda">Deep Voice</string>
+    <string name="preset_profunda_desc">Low, warm, and confident narrator tone</string>
+    <string name="preset_madura">Mature Voice</string>
+    <string name="preset_madura_desc">Adult voice with full presence and body</string>
+    <string name="preset_calida">Warm Voice</string>
+    <string name="preset_calida_desc">Soft, inviting podcast-style tone</string>
+    <string name="preset_femenina">Female Voice</string>
+    <string name="preset_femenina_desc">Natural M to F conversion with matched formants</string>
+    <string name="preset_masculina">Male Voice</string>
+    <string name="preset_masculina_desc">Natural F to M conversion with deep body</string>
+    <string name="preset_susurrante">Whisper Voice</string>
+    <string name="preset_susurrante_desc">Soft intimate air, always intelligible</string>
+    <string name="preset_locutor">Broadcaster Voice</string>
+    <string name="preset_locutor_desc">Deep, clear, compressed radio-style voice</string>
+    <string name="preset_custom">Custom</string>
+    <string name="preset_custom_desc">Your personalized settings within human bounds</string>
+
+    <!-- Manual Screen Sliders -->
+    <string name="param_pitch">Pitch Shift (Semintones)</string>
+    <string name="param_pitch_desc">Natural human range from -8 to +8 semitones</string>
+    <string name="param_formant">Formant Shift</string>
+    <string name="param_formant_desc">Preserves natural vocal timbre (-3 to +3)</string>
+    <string name="param_rumble">Rumble / Low end</string>
+    <string name="param_rumble_desc" formatted="false">Deep low-end boost (0% to 60%)</string>
+    <string name="param_rasp">Vocal Rasp</string>
+    <string name="param_rasp_desc" formatted="false">Natural vocal roughness (0% to 70%)</string>
+    <string name="param_warmth">Warmth / Body</string>
+    <string name="param_warmth_desc" formatted="false">Smooth low-mid EQ boost (0% to 100%)</string>
+    <string name="param_breath">Breathiness</string>
+    <string name="param_breath_desc" formatted="false">Soft natural whisper air (0% to 40%)</string>
+    <string name="param_reverb">Natural Room Reverb</string>
+    <string name="param_reverb_desc" formatted="false">Subtle studio room acoustics (0% to 30%)</string>
+    <string name="param_echo">Subtle Echo</string>
+    <string name="param_echo_desc" formatted="false">Controlled short delay (0% to 20%)</string>
+    <string name="param_compression">Smooth Compression</string>
+    <string name="param_compression_desc" formatted="false">Dynamic volume leveling (0% to 100%)</string>
+    <string name="btn_reset">Reset to Natural Values</string>
+
+    <!-- Record Screen -->
+    <string name="record_title">Record Transformed Voice</string>
+    <string name="record_start">Start Recording</string>
+    <string name="record_stop">Stop Recording</string>
+    <string name="saved_recordings">Saved Recordings</string>
+    <string name="no_recordings">No recordings yet</string>
+    <string name="share">Share</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+
+    <!-- Permissions -->
+    <string name="permission_mic_required">Microphone permission is required for processing.</string>
+    <string name="grant_permission">Grant Permissions</string>
+</resources>
