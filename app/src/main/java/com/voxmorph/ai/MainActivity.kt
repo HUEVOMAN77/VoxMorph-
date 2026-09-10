@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        VoiceChangerService.createNotificationChannel(this)
 
         setContent {
             VoxMorphTheme {
@@ -52,6 +53,9 @@ class MainActivity : ComponentActivity() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         add(Manifest.permission.BLUETOOTH_CONNECT)
                     }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        add(Manifest.permission.FOREGROUND_SERVICE_MICROPHONE)
+                    }
                 }
 
                 val permissionsState = rememberMultiplePermissionsState(permissions = permissions)
@@ -63,16 +67,25 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(uiState.isEngineRunning) {
-                    val intent = Intent(this@MainActivity, VoiceChangerService::class.java)
                     if (uiState.isEngineRunning) {
-                        intent.action = VoiceChangerService.ACTION_START
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
+                        if (permissionsState.allPermissionsGranted) {
+                            val intent = Intent(this@MainActivity, VoiceChangerService::class.java).apply {
+                                action = VoiceChangerService.ACTION_START
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
                         } else {
-                            startService(intent)
+                            viewModel.toggleEngine()
+                            permissionsState.launchMultiplePermissionRequest()
+                            snackbarHostState.showSnackbar(getString(R.string.permission_mic_required))
                         }
                     } else {
-                        intent.action = VoiceChangerService.ACTION_STOP
+                        val intent = Intent(this@MainActivity, VoiceChangerService::class.java).apply {
+                            action = VoiceChangerService.ACTION_STOP
+                        }
                         startService(intent)
                     }
                 }

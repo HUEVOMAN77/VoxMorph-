@@ -7,6 +7,7 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Environment
+import android.util.Log
 import com.voxmorph.ai.data.audio.dsp.Compressor
 import com.voxmorph.ai.data.audio.dsp.DeEsser
 import com.voxmorph.ai.data.audio.dsp.Echo
@@ -38,14 +39,15 @@ import kotlin.math.abs
 
 /**
  * Real-time audio streaming engine using AudioRecord + DSP processing pipeline + AudioTrack.
- * Target latency < 40ms, Buffer size = 2048 samples, 44100 Hz mono PCM 16-bit.
+ * Target latency < 40ms, Buffer size = 2048 samples, PCM 16-bit Mono.
  */
 @Singleton
 class AudioEngine @Inject constructor(
     private val context: Context
 ) {
     companion object {
-        private const val SAMPLE_RATE = 44100
+        private const val TAG = "AudioEngine"
+        private val FALLBACK_SAMPLE_RATES = intArrayOf(44100, 48000, 16000)
         private const val CHANNEL_CONFIG_IN = AudioFormat.CHANNEL_IN_MONO
         private const val CHANNEL_CONFIG_OUT = AudioFormat.CHANNEL_OUT_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
@@ -55,19 +57,20 @@ class AudioEngine @Inject constructor(
     private val scope = CoroutineScope(Dispatchers.Default)
     private var engineJob: Job? = null
 
+    private var activeSampleRate = 44100
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
 
     // DSP Pipeline components
-    private val pitchShifter = PitchShifter(SAMPLE_RATE)
-    private val formantShifter = FormantShifter(SAMPLE_RATE)
-    private val parametricEQ = ParametricEQ(SAMPLE_RATE)
+    private var pitchShifter = PitchShifter(activeSampleRate)
+    private var formantShifter = FormantShifter(activeSampleRate)
+    private var parametricEQ = ParametricEQ(activeSampleRate)
     private val compressor = Compressor()
     private val deEsser = DeEsser()
-    private val reverb = Reverb(SAMPLE_RATE)
-    private val echo = Echo(SAMPLE_RATE)
-    private val vocalRoughness = VocalRoughness(SAMPLE_RATE)
-    private val pitchDetector = PitchDetector(SAMPLE_RATE)
+    private var reverb = Reverb(activeSampleRate)
+    private var echo = Echo(activeSampleRate)
+    private var vocalRoughness = VocalRoughness(activeSampleRate)
+    private var pitchDetector = PitchDetector(activeSampleRate)
     private val formantDetector = FormantDetector()
 
     private val _isRunning = MutableStateFlow(false)
@@ -82,6 +85,7 @@ class AudioEngine @Inject constructor(
     private var currentParams = VoiceParams()
 
     // Recording State
+    @Volatile
     private var isRecordingToFile = false
     private var recordingFileOutputStream: FileOutputStream? = null
     private var currentRecordingFile: File? = null
@@ -104,39 +108,85 @@ class AudioEngine @Inject constructor(
     fun startEngine(): Result<Unit> {
         if (_isRunning.value) return Result.success(Unit)
 
-        return try {
-            val minRecBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG_IN, AUDIO_FORMAT)
-            val minTrackBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG_OUT, AUDIO_FORMAT)
+        var recordInitialized = false
+        var lastError: Exception? = null
 
-            val recBufferSize = maxOf(minRecBufferSize, BUFFER_SIZE * 2)
-            val trackBufferSize = maxOf(minTrackBufferSize, BUFFER_SIZE * 2)
+        for (sampleRate in FALLBACK_SAMPLE_RATES) {
+            try {
+                val minRecBufferSize = AudioRecord.getMinBufferSize(sampleRate, CHANNEL_CONFIG_IN, AUDIO_FORMAT)
+                val minTrackBufferSize = AudioTrack.getMinBufferSize(sampleRate, CHANNEL_CONFIG_OUT, AUDIO_FORMAT)
 
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG_IN,
-                AUDIO_FORMAT,
-                recBufferSize
-            )
+                if (minRecBufferSize <= 0 || minTrackBufferSize <= 0) continue
 
-            audioTrack = AudioTrack.Builder()
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AUDIO_FORMAT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(CHANNEL_CONFIG_OUT)
-                        .build()
+                val recBufferSize = maxOf(minRecBufferSize, BUFFER_SIZE * 2)
+                val trackBufferSize = maxOf(minTrackBufferSize, BUFFER_SIZE * 2)
+
+                val tempRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    CHANNEL_CONFIG_IN,
+                    AUDIO_FORMAT,
+                    recBufferSize
                 )
-                .setBufferSizeInBytes(trackBufferSize)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .build()
 
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED ||
-                audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
-                return Result.failure(IllegalStateException("Audio hardware failed to initialize"))
+                if (tempRecord.state != AudioRecord.STATE_INITIALIZED) {
+                    tempRecord.release()
+                    continue
+                }
+
+                val tempTrack = AudioTrack.Builder()
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AUDIO_FORMAT)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(CHANNEL_CONFIG_OUT)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(trackBufferSize)
+                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                    .build()
+
+                if (tempTrack.state != AudioTrack.STATE_INITIALIZED) {
+                    tempRecord.release()
+                    tempTrack.release()
+                    continue
+                }
+
+                activeSampleRate = sampleRate
+                audioRecord = tempRecord
+                audioTrack = tempTrack
+
+                // Re-initialize DSP modules with active sample rate
+                pitchShifter = PitchShifter(activeSampleRate)
+                formantShifter = FormantShifter(activeSampleRate)
+                parametricEQ = ParametricEQ(activeSampleRate)
+                reverb = Reverb(activeSampleRate)
+                echo = Echo(activeSampleRate)
+                vocalRoughness = VocalRoughness(activeSampleRate)
+                pitchDetector = PitchDetector(activeSampleRate)
+                updateParams(currentParams)
+
+                recordInitialized = true
+                Log.d(TAG, "Audio hardware initialized successfully at $sampleRate Hz")
+                break
+            } catch (e: Exception) {
+                lastError = e
+                Log.w(TAG, "Failed initializing audio at $sampleRate Hz: ${e.message}")
+            }
+        }
+
+        if (!recordInitialized || audioRecord == null || audioTrack == null) {
+            stopEngine()
+            return Result.failure(lastError ?: IllegalStateException("Microphone or Audio output is occupied or unsupported on this device."))
+        }
+
+        return try {
+            audioRecord?.startRecording()
+            if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                stopEngine()
+                return Result.failure(IllegalStateException("Microphone is occupied by another application."))
             }
 
-            audioRecord?.startRecording()
             audioTrack?.play()
             _isRunning.value = true
 
@@ -144,43 +194,56 @@ class AudioEngine @Inject constructor(
                 val pcmBuffer = ShortArray(BUFFER_SIZE)
 
                 while (isActive && _isRunning.value) {
-                    val readSize = audioRecord?.read(pcmBuffer, 0, BUFFER_SIZE) ?: 0
-                    if (readSize > 0) {
-                        // 1. Auto Mode calculation if enabled
-                        if (currentParams.isAutoModeEnabled) {
-                            val detectedPitch = pitchDetector.detectPitch(pcmBuffer, readSize)
-                            if (detectedPitch > 0f) {
-                                val autoShifts = formantDetector.calculateAutoShift(detectedPitch, targetGenderIsFemale = true)
-                                pitchShifter.setPitchShiftSemitones(autoShifts.first)
-                                formantShifter.setFormantShiftFactor(autoShifts.second)
+                    try {
+                        val readSize = audioRecord?.read(pcmBuffer, 0, BUFFER_SIZE) ?: 0
+                        if (readSize > 0) {
+                            // 1. Auto Mode calculation if enabled
+                            if (currentParams.isAutoModeEnabled) {
+                                try {
+                                    val detectedPitch = pitchDetector.detectPitch(pcmBuffer, readSize)
+                                    if (detectedPitch > 0f) {
+                                        val autoShifts = formantDetector.calculateAutoShift(detectedPitch, targetGenderIsFemale = true)
+                                        pitchShifter.setPitchShiftSemitones(autoShifts.first)
+                                        formantShifter.setFormantShiftFactor(autoShifts.second)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Pitch/Formant detector exception: ${e.message}")
+                                }
                             }
-                        }
 
-                        // 2. DSP Pipeline
-                        var processed = pitchShifter.process(pcmBuffer, readSize)
-                        processed = formantShifter.process(processed, readSize)
-                        processed = parametricEQ.process(processed, readSize)
-                        processed = vocalRoughness.process(processed, readSize)
-                        processed = compressor.process(processed, readSize)
-                        processed = deEsser.process(processed, readSize)
-                        processed = reverb.process(processed, readSize)
-                        processed = echo.process(processed, readSize)
+                            // 2. DSP Pipeline with frame guards
+                            var processed = pcmBuffer.copyOf(readSize)
+                            try { processed = pitchShifter.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "PitchShifter error", e) }
+                            try { processed = formantShifter.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "FormantShifter error", e) }
+                            try { processed = parametricEQ.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "ParametricEQ error", e) }
+                            try { processed = vocalRoughness.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "VocalRoughness error", e) }
+                            try { processed = compressor.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "Compressor error", e) }
+                            try { processed = deEsser.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "DeEsser error", e) }
+                            try { processed = reverb.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "Reverb error", e) }
+                            try { processed = echo.process(processed, readSize) } catch (e: Exception) { Log.e(TAG, "Echo error", e) }
 
-                        // 3. Playback
-                        audioTrack?.write(processed, 0, readSize)
+                            // 3. Playback
+                            audioTrack?.write(processed, 0, readSize)
 
-                        // 4. Recording to File
-                        if (isRecordingToFile && recordingFileOutputStream != null) {
-                            val byteBuffer = ByteBuffer.allocate(readSize * 2).order(ByteOrder.LITTLE_ENDIAN)
-                            for (i in 0 until readSize) {
-                                byteBuffer.putShort(processed[i])
+                            // 4. Recording to File
+                            if (isRecordingToFile && recordingFileOutputStream != null) {
+                                try {
+                                    val byteBuffer = ByteBuffer.allocate(readSize * 2).order(ByteOrder.LITTLE_ENDIAN)
+                                    for (i in 0 until readSize) {
+                                        byteBuffer.putShort(processed[i])
+                                    }
+                                    recordingFileOutputStream?.write(byteBuffer.array())
+                                    totalPcmBytesWritten += readSize * 2
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error writing audio recording chunk", e)
+                                }
                             }
-                            recordingFileOutputStream?.write(byteBuffer.array())
-                            totalPcmBytesWritten += readSize * 2
-                        }
 
-                        // 5. Update Waveform and Audio Level
-                        updateMetrics(processed, readSize)
+                            // 5. Update Waveform and Audio Level
+                            updateMetrics(processed, readSize)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Audio process frame error", e)
                     }
                 }
             }
@@ -272,7 +335,7 @@ class AudioEngine @Inject constructor(
 
     private fun writeWavHeader(out: FileOutputStream, totalAudioLen: Long, totalDataLen: Long) {
         val channels = 1
-        val byteRate = 16 * SAMPLE_RATE * channels / 8
+        val byteRate = 16 * activeSampleRate * channels / 8
         val header = ByteArray(44)
 
         header[0] = 'R'.code.toByte(); header[1] = 'I'.code.toByte(); header[2] = 'F'.code.toByte(); header[3] = 'F'.code.toByte()
@@ -283,8 +346,8 @@ class AudioEngine @Inject constructor(
         header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0 // 16-bit PCM format length
         header[20] = 1; header[21] = 0 // PCM format
         header[22] = channels.toByte(); header[23] = 0
-        header[24] = (SAMPLE_RATE and 0xff).toByte(); header[25] = ((SAMPLE_RATE shr 8) and 0xff).toByte()
-        header[26] = ((SAMPLE_RATE shr 16) and 0xff).toByte(); header[27] = ((SAMPLE_RATE shr 24) and 0xff).toByte()
+        header[24] = (activeSampleRate and 0xff).toByte(); header[25] = ((activeSampleRate shr 8) and 0xff).toByte()
+        header[26] = ((activeSampleRate shr 16) and 0xff).toByte(); header[27] = ((activeSampleRate shr 24) and 0xff).toByte()
         header[28] = (byteRate and 0xff).toByte(); header[29] = ((byteRate shr 8) and 0xff).toByte()
         header[30] = ((byteRate shr 16) and 0xff).toByte(); header[31] = ((byteRate shr 24) and 0xff).toByte()
         header[32] = (16 * channels / 8).toByte(); header[33] = 0 // Block align
@@ -298,8 +361,6 @@ class AudioEngine @Inject constructor(
 
     private fun updateWavHeader(raf: RandomAccessFile, pcmDataLen: Long) {
         val totalDataLen = pcmDataLen + 36
-        val channels = 1
-        val byteRate = 16 * SAMPLE_RATE * channels / 8
 
         raf.seek(4)
         raf.write(intToByteArray(totalDataLen.toInt()))
